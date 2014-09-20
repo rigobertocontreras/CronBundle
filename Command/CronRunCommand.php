@@ -28,6 +28,13 @@ class CronRunCommand extends ContainerAwareCommand
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         $start = microtime(true);
+
+        $date = \DateTime::createFromFormat('Y-m-d\TH:i:0P', date('Y-m-d\TH:i:0P'));
+
+        $output->setDecorated(true);
+
+        $output->writeln('<info>Cron start date : ' . $date->format(DATE_ATOM) . '</info>');
+
         $em = $this->getContainer()->get("doctrine.orm.entity_manager");
         $jobRepo = $em->getRepository('ColourStreamCronBundle:CronJob');
         
@@ -50,7 +57,7 @@ class CronRunCommand extends ContainerAwareCommand
         }
         else
         {
-            $jobsToRun = $jobRepo->findDueTasks();
+            $jobsToRun = $jobRepo->findDueTasks($date);
         }
         
         $jobCount = count($jobsToRun);
@@ -58,7 +65,7 @@ class CronRunCommand extends ContainerAwareCommand
         
         foreach($jobsToRun as $job)
         {
-            $this->runJob($job, $output, $em);
+            $this->runJob($job, $output, $em, $date);
         }
         
         // Flush our results to the DB
@@ -66,14 +73,17 @@ class CronRunCommand extends ContainerAwareCommand
         
         $end = microtime(true);
         $duration = sprintf("%0.2f", $end-$start);
-        $output->writeln("Cron run completed in $duration seconds");
+        $output->writeln("<comment>Cron run completed in $duration seconds</comment>");
     }
-    
-    protected function runJob(CronJob $job, OutputInterface $output, EntityManager $em)
-    {
-        $output->write("Running " . $job->getCommand() . ": ");
-        
-        try
+
+    protected function runJob(CronJob $job, OutputInterface $output, EntityManager $em, $date = null) {
+
+        $date = ($date == null) ? new \DateTime() : $date;
+
+        $output->setDecorated(true);
+        $output->writeln("<comment>Running " . $job->getCommand() . ": </comment>");
+
+        try 
         {
             $commandToRun = $this->getApplication()->get($job->getCommand());
         }
@@ -124,6 +134,7 @@ class CronRunCommand extends ContainerAwareCommand
             $statusStr = "failed";
         }
         
+        $output->writeln($jobOutput->getOutput());
         $durationStr = sprintf("%0.2f", $jobEnd-$jobStart);
         $output->writeln("$statusStr in $durationStr seconds");
         
@@ -131,12 +142,14 @@ class CronRunCommand extends ContainerAwareCommand
         $this->recordJobResult($em, $job, $jobEnd-$jobStart, $jobOutput->getOutput(), $returnCode);
         
         // And update the job with it's next scheduled time
-        $newTime = new \DateTime();
+        $newTime = clone $date;
+        $output->writeln('New Time          : ' . $newTime->format(DATE_ATOM));
         $newTime = $newTime->add(new \DateInterval($job->getInterval()));
+        $output->writeln('New interval Time : ' . $newTime->format(DATE_ATOM));
         $job->setNextRun($newTime);
     }
     
-    protected function recordJobResult(EntityManager $em, CronJob $job, $timeTaken, $output, $resultCode)
+    protected function recordJobResult(EntityManager $em, CronJob $job, $timeTaken, $output, $resultCode) 
     {
         // Create a new CronJobResult
         $result = new CronJobResult();
